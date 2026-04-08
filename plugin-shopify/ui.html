@@ -81,50 +81,6 @@
     #toggle-btn.open { transform: rotate(180deg); }
     #toggle-btn:disabled { opacity: 0.3; cursor: default; }
 
-    /* ── Divider ── */
-    hr {
-      border: none;
-      border-top: 1px solid var(--figma-color-border, #e5e5e5);
-      flex-shrink: 0;
-    }
-
-    /* ── Last command ── */
-    #last-row {
-      display: flex;
-      align-items: center;
-      gap: 7px;
-      padding: 0 12px;
-      height: 32px;
-      flex-shrink: 0;
-    }
-
-    #last-status-dot {
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      flex-shrink: 0;
-      background: #ccc;
-    }
-    #last-status-dot.ok      { background: #1bc47d; }
-    #last-status-dot.err     { background: #f24e1e; }
-    #last-status-dot.pending { background: #f7a100; }
-
-    #last-cmd-text {
-      flex: 1;
-      font-weight: 500;
-      color: var(--figma-color-text-secondary, #666);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-    #last-cmd-text.active { color: var(--figma-color-text, #000); }
-
-    #last-time {
-      color: var(--figma-color-text-tertiary, #999);
-      font-variant-numeric: tabular-nums;
-      flex-shrink: 0;
-    }
-
     /* ── Log ── */
     #log-wrap {
       flex: 1;
@@ -197,18 +153,10 @@
     <button id="toggle-btn" onclick="toggleHistory()">▾</button>
   </div>
 
-  <hr />
-
-  <div id="last-row">
-    <div id="last-status-dot"></div>
-    <span id="last-cmd-text">—</span>
-    <span id="last-time"></span>
-  </div>
-
   <!-- Expandable history -->
   <div id="log-wrap">
     <div id="log">
-      <div id="empty">No commands yet</div>
+      <div id="empty">No events yet</div>
     </div>
   </div>
 
@@ -235,27 +183,10 @@
       state === "disconnected" ? "inline-block" : "none";
   }
 
-  // ── Last command ──────────────────────────────────────────────────────────
-
-  function updateLastCommand(entry) {
-    const dot  = document.getElementById("last-status-dot");
-    const cmd  = document.getElementById("last-cmd-text");
-    const time = document.getElementById("last-time");
-
-    dot.className = entry.type === "cmd" ? "pending"
-                  : entry.type === "ok"  ? "ok"
-                  : entry.type === "err" ? "err"
-                  : "";
-
-    cmd.textContent = entry.command;
-    cmd.classList.toggle("active", entry.type !== "info");
-    time.textContent = entry.time;
-  }
-
   // ── History toggle ────────────────────────────────────────────────────────
 
   function collapsedHeight() {
-    return document.getElementById("last-row").getBoundingClientRect().bottom + 1;
+    return document.getElementById("header").getBoundingClientRect().bottom + 1;
   }
 
   function resize(height) {
@@ -264,11 +195,11 @@
 
   function updateToggle() {
     const btn = document.getElementById("toggle-btn");
-    btn.disabled = logEntries.length <= 1;
+    btn.disabled = logEntries.length === 0;
   }
 
   function toggleHistory() {
-    if (logEntries.length <= 1) return;
+    if (logEntries.length === 0) return;
     historyOpen = !historyOpen;
     document.getElementById("log-wrap").classList.toggle("open", historyOpen);
     document.getElementById("toggle-btn").classList.toggle("open", historyOpen);
@@ -283,7 +214,6 @@
     const entry = { type, command, detail, time };
     logEntries.unshift(entry);
     if (logEntries.length > MAX_LOG) logEntries.pop();
-    updateLastCommand(entry);
     updateToggle();
     renderLog();
   }
@@ -291,10 +221,10 @@
   function renderLog() {
     const el = document.getElementById("log");
     if (logEntries.length === 0) {
-      el.innerHTML = '<div id="empty">No commands yet</div>';
+      el.innerHTML = '<div id="empty">No events yet</div>';
       return;
     }
-    el.innerHTML = logEntries.slice(1).map(e => `
+    el.innerHTML = logEntries.map(e => `
       <div class="log-entry">
         <div class="log-dot ${e.type}"></div>
         <span class="log-cmd ${e.type === 'info' ? 'log-info-text' : ''}">${e.command}</span>

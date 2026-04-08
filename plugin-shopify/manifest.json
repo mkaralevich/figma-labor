@@ -1,5 +1,5 @@
 {
-	"name": "Figma Labor",
+	"name": "Pi Labor",
 	"id": "1611556075783258900",
 	"api": "1.0.0",
 	"main": "code.js",
@@ -7,7 +7,7 @@
 	"capabilities": [],
 	"enableProposedApi": false,
 	"documentAccess": "dynamic-page",
-	"editorType": ["figma"],
+	"editorType": ["figma", "dev"],
 	"networkAccess": {
 		"allowedDomains": ["http://localhost:3846", "ws://localhost:3846"],
 		"devAllowedDomains": ["http://localhost:3846", "ws://localhost:3846"],
