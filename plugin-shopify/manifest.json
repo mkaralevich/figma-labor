@@ -1,16 +1,17 @@
 {
-	"name": "Pi Labor",
-	"id": "1611556075783258900",
-	"api": "1.0.0",
-	"main": "code.js",
-	"ui": "ui.html",
-	"capabilities": [],
-	"enableProposedApi": false,
-	"documentAccess": "dynamic-page",
-	"editorType": ["figma", "dev"],
-	"networkAccess": {
-		"allowedDomains": ["http://localhost:3846", "ws://localhost:3846"],
-		"devAllowedDomains": ["http://localhost:3846", "ws://localhost:3846"],
-		"reasoning": "Connects to local figma-labor bridge server for pi coding agent integration"
-	}
+  "name": "Pi Labor",
+  "id": "1611556075783258900",
+  "api": "1.0.0",
+  "main": "code.js",
+  "ui": "ui.html",
+  "capabilities": [],
+  "permissions": ["teamlibrary"],
+  "enableProposedApi": false,
+  "documentAccess": "dynamic-page",
+  "editorType": ["figma", "dev"],
+  "networkAccess": {
+    "allowedDomains": ["http://localhost:3846", "ws://localhost:3846"],
+    "devAllowedDomains": ["http://localhost:3846", "ws://localhost:3846"],
+    "reasoning": "Connects to local figma-labor bridge server for pi coding agent integration"
+  }
 }
