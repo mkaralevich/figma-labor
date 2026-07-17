@@ -1,0 +1,10 @@
+{
+  "name": "figma-labor-plugin",
+  "private": true,
+  "scripts": {
+    "check": "node --check plugin/code.js && node --check plugin-shopify/code.js && node scripts/check-manifests.mjs"
+  },
+  "devDependencies": {
+    "@figma/plugin-typings": "1.131.0"
+  }
+}

@@ -7,15 +7,41 @@ figma.showUI(__html__, {
   themeColors: true,
 });
 
+const MUTATING_COMMANDS = new Set([
+  "update_properties",
+  "resize_node",
+  "scale_node",
+  "update_fills",
+  "update_text",
+  "create_node",
+  "delete_node",
+  "clone_node",
+  "move_node",
+  "detach_instance",
+  "create_instance",
+  "set_layout",
+  "reorder_variant_options",
+  "create_component_set",
+  "run_script",
+]);
+
 figma.ui.onmessage = async (msg) => {
   if (msg.type === "resize") {
     figma.ui.resize(220, msg.height);
+    return;
+  }
+  if (msg.type === "context_request") {
+    figma.ui.postMessage({
+      type: "plugin_context",
+      context: getPluginContext(),
+    });
     return;
   }
 
   const { id, command, params } = msg;
   try {
     const result = await executeCommand(command, params);
+    if (MUTATING_COMMANDS.has(command)) figma.commitUndo();
     figma.ui.postMessage({ id, result });
   } catch (err) {
     figma.ui.postMessage({ id, error: err.message });
@@ -27,7 +53,7 @@ async function executeCommand(command, params) {
     // ## Undo commands
 
     case "undo": {
-      figma.undo();
+      figma.triggerUndo();
       return { success: true };
     }
 
@@ -58,15 +84,15 @@ async function executeCommand(command, params) {
       const node = await requireNode(params.nodeId);
       const p = params.properties || {};
       if (p.name !== undefined) node.name = p.name;
-      if (p.x !== undefined) node.x = p.x;
-      if (p.y !== undefined) node.y = p.y;
-      if (p.opacity !== undefined) node.opacity = p.opacity;
-      if (p.visible !== undefined) node.visible = p.visible;
-      if (p.rotation !== undefined) node.rotation = p.rotation;
-      if (
-        (p.width !== undefined || p.height !== undefined) &&
-        "resize" in node
-      ) {
+      setSupportedProperty(node, "x", p.x);
+      setSupportedProperty(node, "y", p.y);
+      setSupportedProperty(node, "opacity", p.opacity);
+      setSupportedProperty(node, "visible", p.visible);
+      setSupportedProperty(node, "rotation", p.rotation);
+      if (p.width !== undefined || p.height !== undefined) {
+        if (!("resize" in node)) {
+          throw new Error(`${node.type} nodes cannot be resized`);
+        }
         node.resize(
           p.width !== undefined ? p.width : node.width,
           p.height !== undefined ? p.height : node.height,
@@ -105,66 +131,55 @@ async function executeCommand(command, params) {
 
     case "update_text": {
       const node = await requireNode(params.nodeId);
-      if (node.type !== "TEXT")
-        throw new Error(`Node ${params.nodeId} is not a text node`);
-      // ## Load text fonts
-      const segments = node.getStyledTextSegments(["fontName"]);
-      const fontSet = new Map();
-      for (const seg of segments) {
-        const f = seg.fontName;
-        if (f && f.family) fontSet.set(f.family + "::" + f.style, f);
+      if (node.type === "CODE_BLOCK") {
+        if (params.fontSize !== undefined) {
+          throw new Error("CODE_BLOCK nodes do not support fontSize");
+        }
+        await loadCodeBlockFont();
+        if (params.text !== undefined) node.code = params.text;
+        return serializeNode(node);
       }
-      for (const f of fontSet.values()) await figma.loadFontAsync(f);
-      if (params.text !== undefined) node.characters = params.text;
-      if (params.fontSize !== undefined) node.fontSize = params.fontSize;
+      const textNode = getEditableTextNode(node);
+      if (!textNode) {
+        throw new Error(
+          `Node ${params.nodeId} (${node.type}) has no editable text`,
+        );
+      }
+      await loadTextFonts(textNode);
+      if (params.text !== undefined) textNode.characters = params.text;
+      if (params.fontSize !== undefined) textNode.fontSize = params.fontSize;
       return serializeNode(node);
     }
 
     // ## Create commands
 
     case "create_node": {
-      const parent = params.parentId
-        ? await figma.getNodeByIdAsync(params.parentId)
-        : figma.currentPage;
-      if (!parent || !("appendChild" in parent)) {
-        throw new Error("Parent node not found or cannot have children");
-      }
-
-      let node;
-      switch ((params.type || "").toUpperCase()) {
-        case "RECTANGLE":
-          node = figma.createRectangle();
-          break;
-        case "ELLIPSE":
-          node = figma.createEllipse();
-          break;
-        case "FRAME":
-          node = figma.createFrame();
-          break;
-        case "TEXT": {
-          node = figma.createText();
-          await figma.loadFontAsync({ family: "Inter", style: "Regular" });
-          node.characters = params.text || "";
-          break;
+      const { node, attachToParent, selectable } =
+        await createNodeFromParams(params);
+      if (attachToParent) {
+        const parent = params.parentId
+          ? await figma.getNodeByIdAsync(params.parentId)
+          : getDefaultParent();
+        if (!parent || !("appendChild" in parent)) {
+          throw new Error("Parent node not found or cannot have children");
         }
-        default:
-          throw new Error(`Unsupported node type: ${params.type}`);
+        parent.appendChild(node);
       }
 
-      parent.appendChild(node);
       if (params.name !== undefined) node.name = params.name;
-      if (params.x !== undefined) node.x = params.x;
-      if (params.y !== undefined) node.y = params.y;
-      if (
-        params.width !== undefined &&
-        params.height !== undefined &&
-        "resize" in node
-      ) {
+      setSupportedProperty(node, "x", params.x);
+      setSupportedProperty(node, "y", params.y);
+      if (params.width !== undefined && params.height !== undefined) {
+        if (!("resize" in node)) {
+          throw new Error(`${node.type} nodes cannot be resized`);
+        }
         node.resize(params.width, params.height);
       }
 
-      figma.currentPage.selection = [node];
-      figma.viewport.scrollAndZoomIntoView([node]);
+      if (selectable) {
+        figma.currentPage.selection = [node];
+        figma.viewport.scrollAndZoomIntoView([node]);
+      }
       return serializeNode(node);
     }
 
@@ -203,7 +218,7 @@ async function executeCommand(command, params) {
 
     case "move_node": {
       const node = await requireNode(params.nodeId);
-      const newParent = await figma.getNodeByIdAsync(params.parentId);
+      const newParent = await safeGetNodeById(params.parentId);
       if (!newParent || !("appendChild" in newParent)) {
         throw new Error("Target parent not found or cannot have children");
       }
@@ -238,6 +253,7 @@ async function executeCommand(command, params) {
     // ## Instance commands
 
     case "detach_instance": {
+      requireDesignEditor("detach_instance");
       const node = await requireNode(params.nodeId);
       if (node.type !== "INSTANCE") {
         throw new Error(
@@ -249,6 +265,7 @@ async function executeCommand(command, params) {
     }
 
     case "create_instance": {
+      requireDesignEditor("create_instance");
       const component = await figma.getNodeByIdAsync(params.componentId);
       if (!component)
         throw new Error(`Component not found: ${params.componentId}`);
@@ -317,6 +334,7 @@ async function executeCommand(command, params) {
     }
 
     case "get_component_properties": {
+      requireDesignEditor("get_component_properties");
       const node = await requireNode(params.nodeId);
       if (!("componentPropertyDefinitions" in node)) {
         throw new Error("Node has no componentPropertyDefinitions");
@@ -325,12 +343,14 @@ async function executeCommand(command, params) {
     }
 
     case "get_component_set_summary": {
+      requireDesignEditor("get_component_set_summary");
       const node = await requireComponentSet(params.nodeId);
       return serializeComponentSetSummary(node);
     }
 
     case "reorder_variant_options": {
       // ## Reorder variant options
+      requireDesignEditor("reorder_variant_options");
       const node = await requireNode(params.nodeId);
       if (!("componentPropertyDefinitions" in node)) {
         throw new Error("Node has no componentPropertyDefinitions");
@@ -346,6 +366,7 @@ async function executeCommand(command, params) {
     }
 
     case "create_component_set": {
+      requireDesignEditor("create_component_set");
       const ids = params.componentIds || [];
       if (!Array.isArray(ids) || ids.length === 0) {
         throw new Error("componentIds must contain at least one COMPONENT id");
@@ -397,11 +418,191 @@ async function executeCommand(command, params) {
 
 // ## Helper functions
 
+async function createNodeFromParams(params) {
+  const type = (params.type || "").toUpperCase();
+  let node;
+  let attachToParent = true;
+  let selectable = true;
+
+  switch (type) {
+    case "RECTANGLE":
+      node = figma.createRectangle();
+      break;
+    case "ELLIPSE":
+      node = figma.createEllipse();
+      break;
+    case "FRAME":
+      node = figma.createFrame();
+      break;
+    case "TEXT":
+      node = figma.createText();
+      await figma.loadFontAsync({ family: "Inter", style: "Regular" });
+      node.characters = params.text || "";
+      break;
+    case "STICKY":
+      requireEditor("create STICKY", ["figjam"]);
+      node = figma.createSticky();
+      await loadTextFonts(node.text);
+      node.text.characters = params.text || "";
+      break;
+    case "SHAPE_WITH_TEXT":
+      requireEditor("create SHAPE_WITH_TEXT", ["figjam", "slides"]);
+      node = figma.createShapeWithText();
+      if (params.shapeType !== undefined) node.shapeType = params.shapeType;
+      await loadTextFonts(node.text);
+      node.text.characters = params.text || "";
+      break;
+    case "CONNECTOR": {
+      requireEditor("create CONNECTOR", ["figjam"]);
+      node = figma.createConnector();
+      if (params.connectorLineType !== undefined) {
+        node.connectorLineType = params.connectorLineType;
+      }
+      const magnet = node.connectorLineType === "STRAIGHT" ? "CENTER" : "AUTO";
+      if (params.startNodeId) {
+        node.connectorStart = { endpointNodeId: params.startNodeId, magnet };
+      }
+      if (params.endNodeId) {
+        node.connectorEnd = { endpointNodeId: params.endNodeId, magnet };
+      }
+      if (params.text !== undefined) {
+        await loadTextFonts(node.text);
+        node.text.characters = params.text;
+      }
+      break;
+    }
+    case "CODE_BLOCK":
+      requireEditor("create CODE_BLOCK", ["figjam"]);
+      node = figma.createCodeBlock();
+      await loadCodeBlockFont();
+      node.code = params.code || "";
+      if (params.codeLanguage !== undefined) {
+        node.codeLanguage = params.codeLanguage;
+      }
+      break;
+    case "TABLE":
+      requireEditor("create TABLE", ["figjam", "slides"]);
+      node = figma.createTable(params.rows, params.columns);
+      break;
+    case "SECTION":
+      requireEditor("create SECTION", ["figjam"]);
+      node = figma.createSection();
+      break;
+    case "SLIDE":
+      requireEditor("create SLIDE", ["slides"]);
+      node = figma.createSlide(params.row, params.column);
+      attachToParent = false;
+      break;
+    case "SLIDE_ROW":
+      requireEditor("create SLIDE_ROW", ["slides"]);
+      node = figma.createSlideRow(params.row);
+      attachToParent = false;
+      selectable = false;
+      break;
+    default:
+      throw new Error(`Unsupported node type: ${params.type}`);
+  }
+
+  return { node, attachToParent, selectable };
+}
+
+function getPluginContext() {
+  const context = {
+    editorType: figma.editorType,
+    page: { id: figma.currentPage.id, name: figma.currentPage.name },
+    selectionCount: figma.currentPage.selection.length,
+  };
+  if (figma.editorType === "slides") {
+    const focusedSlide = figma.currentPage.focusedSlide;
+    context.focusedSlide = focusedSlide
+      ? { id: focusedSlide.id, name: focusedSlide.name }
+      : null;
+    context.slidesMode = figma.viewport.slidesMode;
+  }
+  return context;
+}
+
+function getDefaultParent() {
+  if (figma.editorType !== "slides") return figma.currentPage;
+  const slide = figma.currentPage.focusedSlide;
+  if (!slide) {
+    throw new Error("No focused slide. Focus a slide or provide parentId.");
+  }
+  return slide;
+}
+
+function requireEditor(operation, editorTypes) {
+  if (!editorTypes.includes(figma.editorType)) {
+    throw new Error(
+      `${operation} is only available in ${editorTypes.join(" or ")}`,
+    );
+  }
+}
+
+function requireDesignEditor(command) {
+  requireEditor(command, ["figma"]);
+}
+
+function setSupportedProperty(node, property, value) {
+  if (value === undefined) return;
+  if (!(property in node)) {
+    throw new Error(`${node.type} nodes do not support ${property}`);
+  }
+  node[property] = value;
+}
+
+function getEditableTextNode(node) {
+  if (node.type === "TEXT") return node;
+  if ("text" in node && node.text && "characters" in node.text) {
+    return node.text;
+  }
+  return null;
+}
+
+async function loadTextFonts(textNode) {
+  const fonts = new Map();
+  if ("getStyledTextSegments" in textNode) {
+    for (const segment of textNode.getStyledTextSegments(["fontName"])) {
+      const font = segment.fontName;
+      if (isUsableFont(font)) {
+        fonts.set(`${font.family}::${font.style}`, font);
+      }
+    }
+  }
+  if (fonts.size === 0 && isUsableFont(textNode.fontName)) {
+    const font = textNode.fontName;
+    fonts.set(`${font.family}::${font.style}`, font);
+  }
+  if (fonts.size === 0) {
+    const fallback = { family: "Inter", style: "Regular" };
+    await figma.loadFontAsync(fallback);
+    textNode.fontName = fallback;
+    return;
+  }
+  for (const font of fonts.values()) await figma.loadFontAsync(font);
+}
+
+function isUsableFont(font) {
+  return (
+    font &&
+    font !== figma.mixed &&
+    typeof font.family === "string" &&
+    font.family.length > 0 &&
+    typeof font.style === "string" &&
+    font.style.length > 0
+  );
+}
+
+async function loadCodeBlockFont() {
+  await figma.loadFontAsync({ family: "Source Code Pro", style: "Medium" });
+}
+
 async function safeGetNodeById(id) {
   // ## Resolve compound instance ids
-  if (id.includes(";")) {
+  if (typeof id === "string" && id.includes(";")) {
     const node = figma.currentPage.findOne((n) => n.id === id);
     if (node) return node;
+    // ## Fallback to async lookup
   }
   return figma.getNodeByIdAsync(id);
 }
@@ -490,10 +691,41 @@ function serializeNode(node) {
   if ("opacity" in node) out.opacity = node.opacity;
   if ("visible" in node) out.visible = node.visible;
   if ("rotation" in node) out.rotation = node.rotation;
-  if (node.type === "TEXT") {
-    out.characters = node.characters;
-    out.fontSize = node.fontSize;
+
+  const textNode = getEditableTextNode(node);
+  if (textNode) {
+    const key = node.type === "TEXT" ? "characters" : "text";
+    out[key] = textNode.characters;
+    out.fontSize = textNode.fontSize;
   }
+
+  if (node.type === "STICKY") {
+    out.authorVisible = node.authorVisible;
+    out.authorName = node.authorName;
+    out.isWideWidth = node.isWideWidth;
+  } else if (node.type === "SHAPE_WITH_TEXT") {
+    out.shapeType = node.shapeType;
+  } else if (node.type === "CONNECTOR") {
+    out.connectorLineType = node.connectorLineType;
+    out.connectorStart = node.connectorStart;
+    out.connectorEnd = node.connectorEnd;
+    out.connectorStartStrokeCap = node.connectorStartStrokeCap;
+    out.connectorEndStrokeCap = node.connectorEndStrokeCap;
+  } else if (node.type === "CODE_BLOCK") {
+    out.code = node.code;
+    out.codeLanguage = node.codeLanguage;
+  } else if (node.type === "TABLE") {
+    out.numRows = node.numRows;
+    out.numColumns = node.numColumns;
+  } else if (node.type === "SECTION") {
+    out.sectionContentsHidden = node.sectionContentsHidden;
+  } else if (node.type === "SLIDE") {
+    out.isSkippedSlide = node.isSkippedSlide;
+    out.slideTransition = node.getSlideTransition();
+  } else if (node.type === "INTERACTIVE_SLIDE_ELEMENT") {
+    out.interactiveSlideElementType = node.interactiveSlideElementType;
+  }
+
   if ("fills" in node && node.fills !== figma.mixed) {
     out.fills = node.fills;
   }

@@ -222,6 +222,7 @@
       let pingTimer = null;
       let intentionalClose = false;
       let historyOpen = false;
+      let pluginContext = null;
 
       // ## Status helpers
 
@@ -324,6 +325,13 @@
         ws.onopen = () => {
           setStatus("connected", "Bridge connected");
           addLog("info", "connected", null);
+          parent.postMessage(
+            { pluginMessage: { type: "context_request" } },
+            "*",
+          );
+          if (pluginContext) {
+            ws.send(JSON.stringify({ type: "hello", context: pluginContext }));
+          }
           if (pingTimer) clearInterval(pingTimer);
           pingTimer = setInterval(() => {
             if (ws && ws.readyState === WebSocket.OPEN)
@@ -361,7 +369,15 @@
 
       window.onmessage = (event) => {
         const msg = event.data.pluginMessage;
-        if (!msg || !msg.id) return;
+        if (!msg) return;
+        if (msg.type === "plugin_context") {
+          pluginContext = msg.context;
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "hello", context: pluginContext }));
+          }
+          return;
+        }
+        if (!msg.id) return;
         if (msg.error) {
           addLog("err", `✕ ${msg.id.slice(0, 6)}`, msg.error.slice(0, 60));
         } else {
