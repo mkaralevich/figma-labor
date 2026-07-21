@@ -315,6 +315,8 @@ async function executeCommand(command, params) {
           "Node does not support auto-layout (must be a frame or component)",
         );
       const p = params;
+      const originalWidth = node.width;
+      const originalHeight = node.height;
       // ## Set layout mode first
       if (p.layoutMode !== undefined) node.layoutMode = p.layoutMode;
       if (p.primaryAxisAlignItems !== undefined)
@@ -330,6 +332,20 @@ async function executeCommand(command, params) {
       if (p.paddingBottom !== undefined) node.paddingBottom = p.paddingBottom;
       if (p.paddingLeft !== undefined) node.paddingLeft = p.paddingLeft;
       if (p.itemSpacing !== undefined) node.itemSpacing = p.itemSpacing;
+
+      // ## Preserve dimensions requested as fixed
+      if ("resize" in node && node.layoutMode !== "NONE") {
+        let width = node.width;
+        let height = node.height;
+        if (node.layoutMode === "HORIZONTAL") {
+          if (p.primaryAxisSizingMode === "FIXED") width = originalWidth;
+          if (p.counterAxisSizingMode === "FIXED") height = originalHeight;
+        } else {
+          if (p.primaryAxisSizingMode === "FIXED") height = originalHeight;
+          if (p.counterAxisSizingMode === "FIXED") width = originalWidth;
+        }
+        node.resize(width, height);
+      }
       return serializeNodeFull(node);
     }
 
