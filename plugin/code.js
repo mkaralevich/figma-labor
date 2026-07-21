@@ -13,6 +13,7 @@ const MUTATING_COMMANDS = new Set([
   "scale_node",
   "update_fills",
   "update_text",
+  "update_table",
   "create_node",
   "delete_node",
   "clone_node",
@@ -89,6 +90,57 @@ async function executeCommand(command, params) {
       setSupportedProperty(node, "opacity", p.opacity);
       setSupportedProperty(node, "visible", p.visible);
       setSupportedProperty(node, "rotation", p.rotation);
+      setSupportedProperty(node, "authorVisible", p.authorVisible);
+      setSupportedProperty(node, "isWideWidth", p.isWideWidth);
+      setSupportedProperty(
+        node,
+        "sectionContentsHidden",
+        p.sectionContentsHidden,
+      );
+      setSupportedProperty(node, "codeLanguage", p.codeLanguage);
+      setSupportedProperty(node, "connectorLineType", p.connectorLineType);
+      setSupportedProperty(
+        node,
+        "connectorStartStrokeCap",
+        p.connectorStartStrokeCap,
+      );
+      setSupportedProperty(
+        node,
+        "connectorEndStrokeCap",
+        p.connectorEndStrokeCap,
+      );
+      if (p.connectorStartNodeId !== undefined) {
+        if (node.type !== "CONNECTOR") {
+          throw new Error(
+            `${node.type} nodes do not support connectorStartNodeId`,
+          );
+        }
+        const magnet =
+          p.connectorStartMagnet ??
+          (node.connectorLineType === "STRAIGHT" ? "CENTER" : "AUTO");
+        node.connectorStart = {
+          endpointNodeId: p.connectorStartNodeId,
+          magnet,
+        };
+      } else if (p.connectorStartMagnet !== undefined) {
+        throw new Error("connectorStartMagnet requires connectorStartNodeId");
+      }
+      if (p.connectorEndNodeId !== undefined) {
+        if (node.type !== "CONNECTOR") {
+          throw new Error(
+            `${node.type} nodes do not support connectorEndNodeId`,
+          );
+        }
+        const magnet =
+          p.connectorEndMagnet ??
+          (node.connectorLineType === "STRAIGHT" ? "CENTER" : "AUTO");
+        node.connectorEnd = {
+          endpointNodeId: p.connectorEndNodeId,
+          magnet,
+        };
+      } else if (p.connectorEndMagnet !== undefined) {
+        throw new Error("connectorEndMagnet requires connectorEndNodeId");
+      }
       if (p.width !== undefined || p.height !== undefined) {
         if (!("resize" in node)) {
           throw new Error(`${node.type} nodes cannot be resized`);
@@ -148,6 +200,56 @@ async function executeCommand(command, params) {
       await loadTextFonts(textNode);
       if (params.text !== undefined) textNode.characters = params.text;
       if (params.fontSize !== undefined) textNode.fontSize = params.fontSize;
+      return serializeNode(node);
+    }
+
+    case "update_table": {
+      const node = await requireNode(params.nodeId);
+      if (node.type !== "TABLE") {
+        throw new Error(
+          `Node ${params.nodeId} is not a TABLE (got ${node.type})`,
+        );
+      }
+      switch (params.action) {
+        case "INSERT_ROW":
+          node.insertRow(requireNumber(params.rowIndex, "rowIndex"));
+          break;
+        case "INSERT_COLUMN":
+          node.insertColumn(requireNumber(params.columnIndex, "columnIndex"));
+          break;
+        case "REMOVE_ROW":
+          node.removeRow(requireNumber(params.rowIndex, "rowIndex"));
+          break;
+        case "REMOVE_COLUMN":
+          node.removeColumn(requireNumber(params.columnIndex, "columnIndex"));
+          break;
+        case "MOVE_ROW":
+          node.moveRow(
+            requireNumber(params.fromIndex, "fromIndex"),
+            requireNumber(params.toIndex, "toIndex"),
+          );
+          break;
+        case "MOVE_COLUMN":
+          node.moveColumn(
+            requireNumber(params.fromIndex, "fromIndex"),
+            requireNumber(params.toIndex, "toIndex"),
+          );
+          break;
+        case "RESIZE_ROW":
+          node.resizeRow(
+            requireNumber(params.rowIndex, "rowIndex"),
+            requireNumber(params.height, "height"),
+          );
+          break;
+        case "RESIZE_COLUMN":
+          node.resizeColumn(
+            requireNumber(params.columnIndex, "columnIndex"),
+            requireNumber(params.width, "width"),
+          );
+          break;
+        default:
+          throw new Error(`Unsupported table action: ${params.action}`);
+      }
       return serializeNode(node);
     }
 
@@ -462,7 +564,7 @@ async function createNodeFromParams(params) {
       node.text.characters = params.text || "";
       break;
     case "SHAPE_WITH_TEXT":
-      requireEditor("create SHAPE_WITH_TEXT", ["figjam", "slides"]);
+      requireEditor("create SHAPE_WITH_TEXT", ["figjam"]);
       node = figma.createShapeWithText();
       if (params.shapeType !== undefined) node.shapeType = params.shapeType;
       await loadTextFonts(node.text);
@@ -497,7 +599,7 @@ async function createNodeFromParams(params) {
       }
       break;
     case "TABLE":
-      requireEditor("create TABLE", ["figjam", "slides"]);
+      requireEditor("create TABLE", ["figjam"]);
       node = figma.createTable(params.rows, params.columns);
       break;
     case "SECTION":
@@ -565,6 +667,13 @@ function setSupportedProperty(node, property, value) {
     throw new Error(`${node.type} nodes do not support ${property}`);
   }
   node[property] = value;
+}
+
+function requireNumber(value, name) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`${name} must be a finite number`);
+  }
+  return value;
 }
 
 function getEditableTextNode(node) {
@@ -733,6 +842,9 @@ function serializeNode(node) {
   } else if (node.type === "TABLE") {
     out.numRows = node.numRows;
     out.numColumns = node.numColumns;
+  } else if (node.type === "TABLE_CELL") {
+    out.rowIndex = node.rowIndex;
+    out.columnIndex = node.columnIndex;
   } else if (node.type === "SECTION") {
     out.sectionContentsHidden = node.sectionContentsHidden;
   } else if (node.type === "SLIDE") {

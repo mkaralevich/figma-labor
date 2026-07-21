@@ -30,11 +30,15 @@ Import the appropriate `manifest.json` through Figma Desktop → Plugins → Dev
 Live testing confirmed:
 
 - Slides reports `figma.editorType === "slides"`, exposes `currentPage.focusedSlide`, and accepts local Plugin API writes inside a slide.
+- Slides supports native slide and slide-row creation, cloning, grid movement, skipped state, transitions, and ordinary frame/text content. The tested runtime does not expose `createShapeWithText()` or `createTable()`, so those creation types are FigJam-only.
+- Setting `style: "NONE"` to clear a slide transition still requires `duration >= 0.01`, even though existing cleared transitions may serialize with duration `0`.
 - FigJam reports `figma.editorType === "figjam"` and supports native sticky creation, selection, zoom, fills, and text updates.
 - FigJam embedded text requires its font to be loaded before changing `characters`; the default sticky font observed in testing was Inter Medium.
 - Newly created connectors report an empty font name until a valid font is assigned. Connector label creation and updates therefore fall back to Inter Regular.
 - Code blocks require Source Code Pro Medium to be loaded before assigning `code`.
-- Native connector creation, endpoints, labels, table creation, compound table-cell reads/text updates, and section creation were verified live.
+- Native connector creation, endpoint reassignment, straight/curved line types, magnets, labels, and start/end caps were verified live.
+- Table insert/remove/move/resize operations were verified for rows and columns. Compound table-cell reads include row/column indexes, and moved cell content remains attached to its row and column.
+- Sticky wide mode and author visibility, section hidden-content state, and code-block language/content updates were verified live.
 - Native node serialization must explicitly include product properties. Generic geometry serialization alone omits values such as sticky text, connector endpoints, slide transitions, and interactive slide element types.
 - Successful mutation commands call `figma.commitUndo()` so `figma.triggerUndo()` reverts only the latest command rather than every write since plugin launch.
 - Desktop MCP `get_figjam` successfully verified the created native sticky. Desktop MCP rejected `get_screenshot` in Slides during testing, so Slides verification uses local reads and viewport zoom.
